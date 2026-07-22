@@ -4,15 +4,20 @@ declare(strict_types=1);
 
 /**
  * Versioning package config.
- *
- * Scaffold-minimal. The `readableVersion()` seam (ticket 01: default `v{n}`,
- * short-UUID opt-in) and any store tuning bind in ticket 03 — this file only
- * has to exist so the provider's mergeConfigFrom/publishes are real.
  */
 return [
 
-    // How a version's monotonic integer renders to humans. `v{n}` by default;
-    // a consumer can rebind the readable-version seam in ticket 03.
+    /*
+     * How a version's per-record monotonic integer renders to a human-readable handle. The
+     * ReadableVersionResolver is bound from this key:
+     *
+     *   'sequential' (default) — `v{n}`, label-enriched (`v3-pre-legal-review`). Collision-free by
+     *                            construction; naturally ordered; zero extra DB work.
+     *   'short-uuid'           — git-style short handle from the version UUID. Opt-in: effectively
+     *                            collision-free per-record, NOT globally (that is the trade-off).
+     *
+     * A consumer needing another scheme rebinds ReadableVersionResolver directly.
+     */
     'readable_version' => env('VERSIONING_READABLE', 'sequential'),
 
 ];

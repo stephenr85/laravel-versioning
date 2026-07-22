@@ -4,18 +4,24 @@ declare(strict_types=1);
 
 namespace Rushing\Versioning;
 
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
+use Rushing\Versioning\Contracts\ReadableVersionResolver;
+use Rushing\Versioning\Contracts\VersionStore;
+use Rushing\Versioning\Readable\SequentialReadableVersion;
+use Rushing\Versioning\Readable\ShortUuidReadableVersion;
+use Rushing\Versioning\Store\DatabaseVersionStore;
 
 /**
  * Package service provider for the record-agnostic linear versioning seam.
  *
- * Merges the package config and (in console) publishes it. The `VersionStore`
- * singleton binding lands in ticket 03 once the store exists — the scaffold
- * only has to boot and resolve cleanly.
+ * Binds the two singletons the seam resolves through — the {@see VersionStore} (freeze / list /
+ * resolve / restore / head) and the {@see ReadableVersionResolver} (how a version's integer renders
+ * to humans, config-selected) — and merges/publishes the package config.
  *
- * Tenant migration ownership (ticket 01, LOCKED): the polymorphic `versions`
- * table DDL is authored by the *consuming app* under its tenant migration path;
- * this package ships the models/contracts/store, never the migration.
+ * Tenant migration ownership (ticket 01, LOCKED): the polymorphic `versions` table DDL is authored
+ * by the *consuming app* under its tenant migration path; this package ships the models/contracts/
+ * store, never the migration — so it stays consumable by any Laravel app, tenant or not.
  */
 final class VersioningServiceProvider extends ServiceProvider
 {
@@ -23,8 +29,16 @@ final class VersioningServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/versioning.php', 'versioning');
 
-        // Ticket 03: bind VersionStore as a singleton here once it exists, e.g.
-        // $this->app->singleton(VersionStore::class);
+        $this->app->singleton(VersionStore::class, DatabaseVersionStore::class);
+
+        $this->app->singleton(ReadableVersionResolver::class, static function (Application $app): ReadableVersionResolver {
+            $strategy = $app['config']->get('versioning.readable_version', 'sequential');
+
+            return match ($strategy) {
+                'short-uuid', 'short_uuid' => new ShortUuidReadableVersion,
+                default => new SequentialReadableVersion,
+            };
+        });
     }
 
     public function boot(): void
