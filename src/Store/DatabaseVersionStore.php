@@ -9,6 +9,7 @@ use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Rushing\Versioning\Contracts\Versionable;
 use Rushing\Versioning\Contracts\VersionStore;
@@ -48,10 +49,16 @@ final class DatabaseVersionStore implements VersionStore
 
     public function version(Versionable $model, string $ref): ?Version
     {
-        $byId = $this->scoped($model)->whereKey($ref)->first();
+        // A uuid ref is a primary-key lookup; anything else is a readable slug. Gate the key lookup on
+        // uuid shape so a slug ref never reaches the DB as a malformed uuid — Postgres rejects a
+        // non-uuid string against a `uuid` column with a 22P02 cast error rather than returning no
+        // rows (sqlite's lax text compare hid this in the conformance suite; the real tenant DB is PG).
+        if (Str::isUuid($ref)) {
+            $byId = $this->scoped($model)->whereKey($ref)->first();
 
-        if ($byId !== null) {
-            return $byId;
+            if ($byId !== null) {
+                return $byId;
+            }
         }
 
         // Fall back to the readable slug — resolved back through the same resolver the model renders.

@@ -93,6 +93,17 @@ it('resolves and restores a version by its readable slug, not just its uuid', fu
     expect($record->fresh()->data)->toBe(['body' => 'original']);
 });
 
+it('resolves an unknown ref to null rather than erroring — including a non-uuid ref', function (): void {
+    $record = fixture('draft');
+    store()->snapshot($record); // v1
+
+    // A non-uuid ref that matches no slug must return null, not throw. On Postgres a bare `whereKey`
+    // on the uuid pk would reject a non-uuid string with a cast error; the store gates the key lookup
+    // on uuid shape so a slug/garbage ref falls through to the (miss) readable-slug resolution.
+    expect(store()->version($record, 'v99'))->toBeNull();
+    expect(store()->version($record, 'not-a-uuid-or-slug'))->toBeNull();
+});
+
 // ── Law 3: monotonic versions + history ──────────────────────────────────────────────────────────
 // Repeated snapshots yield version 1, 2, 3… scoped to the record; history lists newest-first; two
 // distinct records allocate independently and never collide.
