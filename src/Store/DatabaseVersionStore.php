@@ -11,6 +11,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
+use Rushing\Versioning\Contracts\MigratesSnapshotOnRestore;
 use Rushing\Versioning\Contracts\Versionable;
 use Rushing\Versioning\Contracts\VersionStore;
 use Rushing\Versioning\Models\Version;
@@ -77,10 +78,19 @@ final class DatabaseVersionStore implements VersionStore
             );
         }
 
+        // Compose with the migration seam: a record that migrates-across-versions runs an OLDER
+        // snapshot forward through its bound Migrator before rehydration, so a restore lands a
+        // CURRENT-shaped record. Opt-in and the record's own concern (the store never inspects
+        // snapshot shape); a plain Versionable restores verbatim.
+        $snapshot = $version->snapshot;
+        if ($model instanceof MigratesSnapshotOnRestore) {
+            $snapshot = $model->migrateSnapshotForward($snapshot);
+        }
+
         // Apply the frozen snapshot back onto the live record and move HEAD to it in one save. This is
         // the pointer-move primitive; a consumer that wants restore to ALSO mint a fresh version
         // (append-only history) layers a snapshot() call on top — the store does not bake that in.
-        $model->restoreVersionSnapshot($version->snapshot);
+        $model->restoreVersionSnapshot($snapshot);
         $model->setAttribute($model->versionPinAttribute(), $version->id);
         $model->save();
     }
