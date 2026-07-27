@@ -1,6 +1,6 @@
 {
     "name": "rushing/laravel-versioning",
-    "description": "A record-agnostic linear versioning seam for Laravel: the Versionable contract+trait (immutable named snapshot + HEAD pin + restore), an immutable Version model, and a VersionStore. Any schema-driven record opts in; the app owns the tenant migration.",
+    "description": "Record-agnostic versioning seams for Laravel — snapshot AND migration. Snapshot/restore: the Versionable contract+trait (immutable named snapshot + HEAD pin + restore), an immutable Version model, and a VersionStore. Migration-across-versions: the Migrator port (migrate a payload version-to-version), the MigrationOutcome value type (current/migrated/pending/failed, original-preserved, shouldWriteBack), and the reconcile-on-read / eager-drain concerns — the contract only; a concrete engine (e.g. schemastud/laravel-data-schemas' MigrationLadder) is bound to the port by an engine-tier adapter. Any schema-driven record opts into either seam; the app owns the tenant migration.",
     "keywords": ["laravel", "versioning", "snapshot", "history", "restore", "seam", "immutable"],
     "license": "MIT",
     "authors": [
