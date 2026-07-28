@@ -5,7 +5,7 @@ declare(strict_types=1);
 use Rushing\Versioning\Contracts\ReadableVersionResolver;
 use Rushing\Versioning\Contracts\VersionStore;
 use Rushing\Versioning\Readable\SequentialReadableVersion;
-use Rushing\Versioning\Store\DatabaseVersionStore;
+use Rushing\Versioning\Store\EloquentVersionStore;
 use Rushing\Versioning\VersioningServiceProvider;
 
 it('boots the service provider', function (): void {
@@ -18,7 +18,7 @@ it('merges the package config', function (): void {
 
 it('resolves the VersionStore singleton', function (): void {
     expect(app(VersionStore::class))
-        ->toBeInstanceOf(DatabaseVersionStore::class)
+        ->toBeInstanceOf(EloquentVersionStore::class)
         ->and(app(VersionStore::class))->toBe(app(VersionStore::class)); // same instance = singleton
 });
 

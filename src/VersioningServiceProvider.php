@@ -10,7 +10,7 @@ use Rushing\Versioning\Contracts\ReadableVersionResolver;
 use Rushing\Versioning\Contracts\VersionStore;
 use Rushing\Versioning\Readable\SequentialReadableVersion;
 use Rushing\Versioning\Readable\ShortUuidReadableVersion;
-use Rushing\Versioning\Store\DatabaseVersionStore;
+use Rushing\Versioning\Store\EloquentVersionStore;
 
 /**
  * Package service provider for the record-agnostic linear versioning seam.
@@ -29,7 +29,7 @@ final class VersioningServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/versioning.php', 'versioning');
 
-        $this->app->singleton(VersionStore::class, DatabaseVersionStore::class);
+        $this->app->singleton(VersionStore::class, EloquentVersionStore::class);
 
         $this->app->singleton(ReadableVersionResolver::class, static function (Application $app): ReadableVersionResolver {
             $strategy = $app['config']->get('versioning.readable_version', 'sequential');

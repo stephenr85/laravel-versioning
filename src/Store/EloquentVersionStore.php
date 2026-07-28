@@ -7,6 +7,7 @@ namespace Rushing\Versioning\Store;
 use Illuminate\Contracts\Auth\Factory as AuthFactory;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -17,17 +18,24 @@ use Rushing\Versioning\Contracts\VersionStore;
 use Rushing\Versioning\Models\Version;
 
 /**
- * The concrete, record-agnostic store. Everything that freezes, lists, resolves, or restores a
+ * The Eloquent {@see VersionStore} adapter. Everything that freezes, lists, resolves, or restores a
  * version goes through here, so the monotonic-allocation + HEAD-pin discipline lives in exactly one
  * place. The record is its own lineage: rows are scoped by the polymorphic morph
  * (`versionable_type`/`versionable_id`), never a lineage key.
  *
  * Snapshot serialization is the record's job ({@see Versionable::toVersionSnapshot()}); this store
- * never inspects snapshot shape — that is what makes it consumable by any schema-driven record.
+ * never inspects snapshot shape — that is what keeps it consumable by any schema-driven record.
+ *
+ * The {@see VersionStore} contract stays storage-agnostic — it types the record as {@see Versionable}
+ * (the three-method socket), so an alternate backend could implement it. THIS adapter is Eloquent: it
+ * mints an Eloquent {@see Version}, moves a HEAD pin, and scopes by morph — all of which need the
+ * `Model` API beyond the socket. Rather than leak `Model` into the port, the Eloquent requirement is
+ * enforced HERE, at the adapter boundary, by {@see eloquent()} — which narrows a {@see Versionable} to
+ * the `Model&Versionable` intersection (a hard error if a non-Eloquent record is ever passed).
  *
  * @see VersionStore for the surface contract.
  */
-final class DatabaseVersionStore implements VersionStore
+final class EloquentVersionStore implements VersionStore
 {
     public function __construct(
         private readonly ConnectionResolverInterface $db,
@@ -40,16 +48,18 @@ final class DatabaseVersionStore implements VersionStore
         // (versionable_type, versionable_id, version) index is the correctness backstop — a colliding
         // concurrent snapshot fails loudly and we retry exactly once. No row lock in v1: snapshots are
         // explicit, per-record acts, so contention is effectively zero.
-        return $this->allocate($model, $label, retriesLeft: 1);
+        return $this->allocate($this->eloquent($model), $label, retriesLeft: 1);
     }
 
     public function versions(Versionable $model): Collection
     {
-        return $this->scoped($model)->orderByDesc('version')->get();
+        return $this->scoped($this->eloquent($model))->orderByDesc('version')->get();
     }
 
     public function version(Versionable $model, string $ref): ?Version
     {
+        $model = $this->eloquent($model);
+
         // A uuid ref is a primary-key lookup; anything else is a readable slug. Gate the key lookup on
         // uuid shape so a slug ref never reaches the DB as a malformed uuid — Postgres rejects a
         // non-uuid string against a `uuid` column with a 22P02 cast error rather than returning no
@@ -70,6 +80,8 @@ final class DatabaseVersionStore implements VersionStore
 
     public function restore(Versionable $model, string $ref): void
     {
+        $model = $this->eloquent($model);
+
         $version = $this->version($model, $ref);
 
         if ($version === null) {
@@ -97,6 +109,8 @@ final class DatabaseVersionStore implements VersionStore
 
     public function head(Versionable $model): ?Version
     {
+        $model = $this->eloquent($model);
+
         $pin = $model->getAttribute($model->versionPinAttribute());
 
         if (blank($pin)) {
@@ -110,7 +124,7 @@ final class DatabaseVersionStore implements VersionStore
      * Freeze one version transactionally, retrying once on a unique collision (a concurrent snapshot
      * that grabbed the same `version` number).
      */
-    private function allocate(Versionable $model, ?string $label, int $retriesLeft): Version
+    private function allocate(Model&Versionable $model, ?string $label, int $retriesLeft): Version
     {
         try {
             return $this->db->connection()->transaction(function () use ($model, $label): Version {
@@ -138,7 +152,7 @@ final class DatabaseVersionStore implements VersionStore
         }
     }
 
-    private function nextVersionNumber(Versionable $model): int
+    private function nextVersionNumber(Model&Versionable $model): int
     {
         return ((int) $this->scoped($model)->max('version')) + 1;
     }
@@ -148,10 +162,26 @@ final class DatabaseVersionStore implements VersionStore
      *
      * @return Builder<Version>
      */
-    private function scoped(Versionable $model): Builder
+    private function scoped(Model&Versionable $model): Builder
     {
         return Version::query()
             ->where('versionable_type', $model->getMorphClass())
             ->where('versionable_id', $model->getKey());
+    }
+
+    /**
+     * Narrow a {@see Versionable} to the `Model&Versionable` this Eloquent adapter requires — the one
+     * place the port's storage-agnostic socket meets Eloquent. A record that is Versionable but not an
+     * Eloquent Model cannot be minted/pinned/scoped here, so it is a hard, loud error rather than a
+     * fatal deep in a morph query.
+     */
+    private function eloquent(Versionable $model): Model&Versionable
+    {
+        return $model instanceof Model ? $model : throw new InvalidArgumentException(sprintf(
+            '%s versions Eloquent models only; %s implements Versionable but does not extend %s.',
+            self::class,
+            $model::class,
+            Model::class,
+        ));
     }
 }
