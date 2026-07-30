@@ -36,9 +36,19 @@ class Version extends Model
 {
     use HasUuids;
 
-    protected $table = 'versions';
-
     protected $guarded = [];
+
+    /**
+     * The version store's table name is a config seam (`versioning.table`, default `versions`) — NOT a
+     * hardcoded property. The foundation keeps its independent default (no upward dependency on any
+     * consumer), but a composing host that owns a table-prefix idiom (e.g. beam's `Beam::table()`) can
+     * repoint every version row through one config key without editing this model. A property default
+     * can't call `config()`, so the resolution lives in `getTable()`.
+     */
+    public function getTable(): string
+    {
+        return $this->table ?? (string) config('versioning.table', 'versions');
+    }
 
     protected $casts = [
         'snapshot' => 'array',

@@ -20,4 +20,12 @@ return [
      */
     'readable_version' => env('VERSIONING_READABLE', 'sequential'),
 
+    /*
+     * The physical table the Version model reads/writes. Defaults to `versions` — the foundation holds
+     * NO opinion beyond that and depends on no consumer. A composing host that owns a table-prefix idiom
+     * repoints this ONE key (e.g. splicewire-app sets it to beam's `Beam::table('versions')` →
+     * `beam_versions`) and every version row follows, without editing the foundation model.
+     */
+    'table' => env('VERSIONING_TABLE', 'versions'),
+
 ];
