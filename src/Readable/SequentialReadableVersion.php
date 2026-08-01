@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace Rushing\Versioning\Readable;
 
 use Illuminate\Support\Str;
@@ -13,7 +11,7 @@ use Rushing\Versioning\Models\Version;
  * Collision-free by construction — it is the per-record unique monotonic integer, so zero extra DB
  * work and naturally ordered.
  */
-final class SequentialReadableVersion implements ReadableVersionResolver
+class SequentialReadableVersion implements ReadableVersionResolver
 {
     public function toReadable(Version $version): string
     {

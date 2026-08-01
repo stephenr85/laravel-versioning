@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 use Illuminate\Database\UniqueConstraintViolationException;
 use Rushing\Versioning\Contracts\VersionStore;
 use Rushing\Versioning\Models\Version;

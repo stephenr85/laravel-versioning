@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace Rushing\Versioning;
 
 /**
@@ -25,16 +23,16 @@ namespace Rushing\Versioning;
  * (a schema `$id` in the schema-ladder adapter); it is deliberately not called
  * `schemaId` so the substrate never names a schema concept.
  */
-final class MigrationOutcome
+class MigrationOutcome
 {
     /**
      * @param  array<string, mixed>|null  $payload  the payload to surface, or null when unchanged
      */
     private function __construct(
-        public readonly MigrationStatus $status,
-        public readonly ?array $payload,
-        public readonly ?string $versionId,
-        public readonly bool $shouldWriteBack,
+        public MigrationStatus $status,
+        public ?array $payload,
+        public ?string $versionId,
+        public bool $shouldWriteBack,
     ) {}
 
     /** Already at the target version — nothing changes. */

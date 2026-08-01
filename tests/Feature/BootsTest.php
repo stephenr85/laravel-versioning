@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 use Rushing\Versioning\Contracts\ReadableVersionResolver;
 use Rushing\Versioning\Contracts\VersionStore;
 use Rushing\Versioning\Readable\SequentialReadableVersion;

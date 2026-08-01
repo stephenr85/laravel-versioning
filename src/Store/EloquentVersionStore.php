@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace Rushing\Versioning\Store;
 
 use Illuminate\Contracts\Auth\Factory as AuthFactory;
@@ -35,11 +33,11 @@ use Rushing\Versioning\Models\Version;
  *
  * @see VersionStore for the surface contract.
  */
-final class EloquentVersionStore implements VersionStore
+class EloquentVersionStore implements VersionStore
 {
     public function __construct(
-        private readonly ConnectionResolverInterface $db,
-        private readonly AuthFactory $auth,
+        private ConnectionResolverInterface $db,
+        private AuthFactory $auth,
     ) {}
 
     public function snapshot(Versionable $model, ?string $label = null): Version

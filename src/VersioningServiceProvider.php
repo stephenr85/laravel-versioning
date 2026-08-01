@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace Rushing\Versioning;
 
 use Illuminate\Contracts\Foundation\Application;
@@ -23,7 +21,7 @@ use Rushing\Versioning\Store\EloquentVersionStore;
  * by the *consuming app* under its tenant migration path; this package ships the models/contracts/
  * store, never the migration — so it stays consumable by any Laravel app, tenant or not.
  */
-final class VersioningServiceProvider extends ServiceProvider
+class VersioningServiceProvider extends ServiceProvider
 {
     public function register(): void
     {

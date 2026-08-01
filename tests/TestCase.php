@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace Rushing\Versioning\Tests;
 
 use Illuminate\Database\Schema\Blueprint;

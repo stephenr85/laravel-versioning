@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace Rushing\Versioning\Readable;
 
 use Illuminate\Support\Str;
@@ -14,7 +12,7 @@ use Rushing\Versioning\Models\Version;
  * record won't hold thousands of versions); globally it is NOT, which is precisely why it is opt-in —
  * bind it via config `versioning.readable_version = 'short-uuid'` with eyes open.
  */
-final class ShortUuidReadableVersion implements ReadableVersionResolver
+class ShortUuidReadableVersion implements ReadableVersionResolver
 {
     /** How many leading hex chars of the UUID form the short handle. */
     private const LENGTH = 8;

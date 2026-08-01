@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 use Rushing\Versioning\MigrationOutcome;
 use Rushing\Versioning\MigrationStatus;
 
