@@ -3,9 +3,11 @@
 namespace Rushing\Versioning;
 
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Foundation\AliasLoader;
 use Illuminate\Support\ServiceProvider;
 use Rushing\Versioning\Contracts\ReadableVersionResolver;
 use Rushing\Versioning\Contracts\VersionStore;
+use Rushing\Versioning\Facades\Version;
 use Rushing\Versioning\Readable\SequentialReadableVersion;
 use Rushing\Versioning\Readable\ShortUuidReadableVersion;
 use Rushing\Versioning\Store\EloquentVersionStore;
@@ -41,6 +43,10 @@ class VersioningServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        if (class_exists(AliasLoader::class)) {
+            AliasLoader::getInstance()->alias('Version', Version::class);
+        }
+
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__.'/../config/versioning.php' => config_path('versioning.php'),
