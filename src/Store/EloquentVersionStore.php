@@ -125,8 +125,9 @@ class EloquentVersionStore implements VersionStore
     private function allocate(Model&Versionable $model, ?string $label, int $retriesLeft): Version
     {
         try {
-            return $this->db->connection()->transaction(function () use ($model, $label): Version {
-                $version = Version::query()->create([
+            // The record's own connection, for the transaction and the row (see {@see on()}).
+            return $this->db->connection($model->getConnectionName())->transaction(function () use ($model, $label): Version {
+                $version = $this->on($model)->create([
                     'versionable_type' => $model->getMorphClass(),
                     'versionable_id' => $model->getKey(),
                     'version' => $this->nextVersionNumber($model),
@@ -162,9 +163,22 @@ class EloquentVersionStore implements VersionStore
      */
     private function scoped(Model&Versionable $model): Builder
     {
-        return Version::query()
+        return $this->on($model)
             ->where('versionable_type', $model->getMorphClass())
             ->where('versionable_id', $model->getKey());
+    }
+
+    /**
+     * A version query on the RECORD's connection: a record's history lives where the record does, as its own
+     * `versions()` relation already resolves it. On the process default, a central record under tenancy minted its
+     * versions into the tenant, outside any transaction its caller held on the record's connection, so a failure after
+     * the snapshot rolled back the record but kept the version. A record on the default connection is unchanged.
+     *
+     * @return Builder<Version>
+     */
+    private function on(Model&Versionable $model): Builder
+    {
+        return Version::on($model->getConnectionName());
     }
 
     /**

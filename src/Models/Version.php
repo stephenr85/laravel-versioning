@@ -19,8 +19,9 @@ use Rushing\Versioning\Contracts\ReadableVersionResolver;
  * frozen column throws. Only `label` (a human annotation, not history) may be renamed. So "edit"
  * has no path but to fork a NEW version; the store never even tries to rewrite one.
  *
- * Runs on the default connection — under the host's tenancy that is the tenant schema, so versions
- * are tenant data.
+ * Stored on the versioned record's connection (the store resolves it per record): a record on the default
+ * connection, which under the host's tenancy is the tenant schema, keeps tenant-data versions; a record pinned to
+ * another connection keeps its versions beside it.
  *
  * @property string $id
  * @property string $versionable_type
