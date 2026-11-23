@@ -13,6 +13,7 @@ use InvalidArgumentException;
 use Rushing\Versioning\Contracts\MigratesSnapshotOnRestore;
 use Rushing\Versioning\Contracts\Versionable;
 use Rushing\Versioning\Contracts\VersionStore;
+use Rushing\Versioning\Exceptions\VersionWriteRefused;
 use Rushing\Versioning\Models\Version;
 
 /**
@@ -102,7 +103,13 @@ class EloquentVersionStore implements VersionStore
         // (append-only history) layers a snapshot() call on top — the store does not bake that in.
         $model->restoreVersionSnapshot($snapshot);
         $model->setAttribute($model->versionPinAttribute(), $version->id);
-        $model->save();
+
+        // The pointer-move can be refused: a halting `saving`/`updating` listener makes `save()`
+        // return false without persisting. Nothing here is transactional, so a swallowed boolean
+        // would leave the record unchanged while the caller believes the restore landed. Fail loudly.
+        if (! $model->save()) {
+            throw VersionWriteRefused::restore($model);
+        }
     }
 
     public function head(Versionable $model): ?Version
@@ -138,7 +145,14 @@ class EloquentVersionStore implements VersionStore
 
                 // Advance the HEAD pin on the record to the version just minted.
                 $model->setAttribute($model->versionPinAttribute(), $version->id);
-                $model->save();
+
+                // The pin-move can be refused: a halting `saving`/`updating` listener makes `save()`
+                // return false without persisting. A swallowed boolean would leave a freshly minted
+                // version with nothing pointing at it. Throw so the enclosing transaction rolls the
+                // version back — nothing persists.
+                if (! $model->save()) {
+                    throw VersionWriteRefused::snapshot($model);
+                }
 
                 return $version;
             });
