@@ -186,8 +186,16 @@ class EloquentVersionStore implements VersionStore
             });
         } catch (UniqueConstraintViolationException $e) {
             if ($retriesLeft > 0) {
+                // The retry re-enters allocate(), which re-captures ($attributes, $original) from the
+                // live instance — so the reset below is for the EXHAUSTED path only, not this branch.
                 return $this->allocate($model, $label, $retriesLeft - 1);
             }
+
+            // A unique collision raised by the PIN SAVE (not the version insert) mutated the instance
+            // before it threw; reset before the final rethrow so the exhausted-retry path closes the
+            // same "any throwable resets the instance" hole the \Throwable catch below does. (A
+            // version-insert collision leaves the instance unmutated, so the reset is then a no-op.)
+            $this->discardRefusedWrite($model, $attributes, $original);
 
             throw $e;
         } catch (\Throwable $e) {
@@ -212,24 +220,40 @@ class EloquentVersionStore implements VersionStore
      * baseline — to their pre-call values, so the caller's OWN pre-call dirty set is preserved EXACTLY:
      * only the store's attempted pin/restore mutation is discarded. A blanket syncOriginal() would
      * instead mark a caller's unsaved pre-call edit "clean", so a later save() would silently drop it.
-     * The two setRawAttributes() calls do this with no reflection: the first (sync) sets `original` to
-     * the baseline, the second (no sync) sets `attributes` to the pre-call values and leaves `original`.
+     * Three setRawAttributes()/syncOriginal() steps do this with no reflection, and crucially CLEAR the
+     * cast caches BEFORE syncing: setRawAttributes($x, true) runs syncOriginal() (which reads
+     * getAttributes() → mergeAttributesFromCachedCasts()) BEFORE it clears classCastCache /
+     * attributeCastCache, so a value cached from the REFUSED write would be merged over the baseline and
+     * copied into `original`. Clearing first (sync=false) then syncing records the true baseline.
      *
-     * Scope: this resets the ATTRIBUTE state (attributes + original) only. It does NOT reset the
-     * post-save change log (getChanges()/wasChanged() still reflect the attempted write), loaded
-     * relations, `exists`/`wasRecentlyCreated`, or any custom in-memory state a record keeps; a caller
-     * that reads those after a refused write must not rely on them.
+     * Scope: this resets the ATTRIBUTE state (attributes + original, including cached casts) only. It
+     * does NOT reset the post-save change log (getChanges()/wasChanged() still reflect the attempted
+     * write), loaded relations, `exists`/`wasRecentlyCreated`, or any custom in-memory state a record
+     * keeps; a caller that reads those after a refused write must not rely on them. And if the reset
+     * ITSELF throws (an overridden setRawAttributes, a cast that throws on merge) the instance's
+     * attribute state is NOT guaranteed — the reset's own error is swallowed here so it cannot mask the
+     * caller's original exception, which the caller rethrows after this returns.
      *
      * @param  array<string, mixed>  $attributes  the pre-call attribute set (the caller's edits included)
      * @param  array<string, mixed>  $original    the pre-call DB-synced original baseline
      */
     private function discardRefusedWrite(Model $model, array $attributes, array $original): void
     {
-        // original := pre-call baseline (sync=true copies attributes->original), then
-        // attributes := pre-call values (sync=false leaves original untouched). Net: the exact
-        // pre-call (attributes, original) pair, so isDirty()/getDirty() match the pre-call state.
-        $model->setRawAttributes($original, true);
-        $model->setRawAttributes($attributes, false);
+        try {
+            // Rebuild the pre-call (attributes, original) pair with the cast caches CLEARED first, so a
+            // value cached from the refused write can't leak into the baseline. In order:
+            //   1. attributes := baseline, both cast caches cleared, NO sync (original untouched);
+            //   2. syncOriginal(): copy those now-clean attributes into `original` — the true baseline;
+            //   3. attributes := pre-call values, caches cleared again; `original` left from step 2.
+            // Net: attributes = pre-call values, original = pre-call baseline, caches empty — so
+            // isDirty()/getDirty() match the pre-call state exactly, with no cached-cast pollution.
+            $model->setRawAttributes($original, false);
+            $model->syncOriginal();
+            $model->setRawAttributes($attributes, false);
+        } catch (\Throwable) {
+            // The reset itself failed; the instance's attribute state is not guaranteed. Swallow it so
+            // the caller's ORIGINAL exception (the one it is mid-throw on) surfaces unmasked.
+        }
     }
 
     private function nextVersionNumber(Model&Versionable $model): int
