@@ -21,15 +21,19 @@ use Rushing\Versioning\Tests\Fixtures\ThrowingRestoreFixtureRecord;
  * attempt leaves no version, a reset that ITSELF throws does not retry onto a polluted instance (the
  * original collision surfaces at once), and the refusal names its subject off the message.
  *
- * Not every test here reads red at the pre-fix store. FOUR re-assert or fold in behavior the base
+ * Not every test here reads red at the pre-fix store. FIVE re-assert or fold in behavior the base
  * store already had and are green at base AND cand: the two refuse-loudly veto tests ('refuses a
- * snapshot whose HEAD-pin write is vetoed...' and 'refuses a restore whose write is vetoed...') and
- * the two subject-naming tests ('names the subject on properties and keeps its identity out of the
+ * snapshot whose HEAD-pin write is vetoed...' and 'refuses a restore whose write is vetoed...'), the
+ * two subject-naming tests ('names the subject on properties and keeps its identity out of the
  * message' on the snapshot path, and the same on the restore path — the latter a coverage fold the
- * snapshot path already had). The behavior this amend ADDS — the post-refusal instance reset and its
- * edge cases (clean-instance, preserved pre-call edit, cached-cast clear, any-throwable reset,
- * reset-itself-throws non-masking), the every-attempt unique collision, and the no-retry-onto-a-
- * failed-reset rule — reads red at the pre-fix store and green at cand. The amend's gate record
+ * snapshot path already had), and the reset-throws RESTORE test ('surfaces the original refusal
+ * unchanged even when the instance reset itself throws') — green at base because the pre-fix restore()
+ * throws the refusal DIRECTLY on a veto and never reaches a reset, so the reset-boom never fires; it is
+ * a guard that the amended restore path still surfaces the refusal once it DOES reset. The behavior
+ * this amend ADDS — the post-refusal instance reset on the SNAPSHOT path and its edge cases
+ * (clean-instance, preserved pre-call edit, cached-cast clear, any-throwable reset), the every-attempt
+ * unique collision, and the no-retry-onto-a-failed-reset rule ('surfaces the original unique collision
+ * without retrying...') — reads red at the pre-fix store and green at cand. The amend's gate record
  * carries the authoritative per-test base/cand result; do not infer a claim from this comment.
  */
 
