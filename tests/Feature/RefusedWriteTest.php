@@ -3,7 +3,9 @@
 use Rushing\Versioning\Contracts\VersionStore;
 use Rushing\Versioning\Exceptions\VersionWriteRefused;
 use Rushing\Versioning\Models\Version;
+use Rushing\Versioning\Tests\Fixtures\CachingCastFixtureRecord;
 use Rushing\Versioning\Tests\Fixtures\FixtureRecord;
+use Rushing\Versioning\Tests\Fixtures\ResetThrowingFixtureRecord;
 use Rushing\Versioning\Tests\Fixtures\SelfSavingFixtureRecord;
 use Rushing\Versioning\Tests\Fixtures\ThrowingRestoreFixtureRecord;
 
@@ -12,9 +14,12 @@ use Rushing\Versioning\Tests\Fixtures\ThrowingRestoreFixtureRecord;
  * `saving`/`updating` listener makes that `save()` return false WITHOUT persisting; the store must
  * refuse loudly rather than swallow the boolean and leave a half-applied operation that the caller
  * believes succeeded. The laws below pin that refusal AND the cleanup it owes: the mint/restore rolls
- * back as one transaction, nothing of the refused write survives on the instance, a caller's OWN
- * pre-call edit is preserved, ANY throwable (not only the veto) triggers the same reset, and the
- * refusal names its subject off the message. Each reads red against the pre-fix store.
+ * back as one transaction, nothing of the refused write survives on the instance (including a value
+ * cached behind a class cast, and even when the reset itself throws), a caller's OWN pre-call edit is
+ * preserved, ANY throwable (not only the veto) triggers the same reset, and the refusal names its
+ * subject off the message. Each law below reads red against the pre-fix store — with ONE exception,
+ * noted where it sits: the restore exception-factory test at the end is a coverage fold (green at
+ * base AND cand), folding the restore path into the subject-naming law the snapshot path already had.
  */
 
 // ── snapshot: a vetoed HEAD-pin write rolls the minted version back ────────────────────────────────
@@ -240,6 +245,60 @@ it('resets the instance and rethrows unchanged when a restore hook throws after 
     expect($record->fresh())
         ->name->toBe('edited')
         ->data->toBe(['body' => 'later']);
+});
+
+// ── the reset survives a CACHED class cast on a snapshotted field (clear the cache before syncing) ──
+
+it('resets a cached class-cast attribute to the pre-call baseline, not the refused write', function (): void {
+    $record = CachingCastFixtureRecord::query()->create(['name' => 'original', 'data' => ['k' => 'v0']]);
+    $store = app(VersionStore::class);
+
+    $v1 = $store->snapshot($record);                                 // head → v1 (data k=>v0)
+    $record->update(['name' => 'current', 'data' => ['k' => 'current']]);
+
+    // Read the class-cast attribute so its resolved value is held in the model's classCastCache. The
+    // cache tracks the live 'current' now, and will track the REFUSED 'v0' write mid-restore — the
+    // pollution source the reset must not copy into the baseline.
+    expect($record->data['k'])->toBe('current')
+        ->and($record->isDirty())->toBeFalse();                      // just saved: a clean baseline
+
+    // The restore's pin-move write is vetoed.
+    $veto = true;
+    CachingCastFixtureRecord::saving(fn () => $veto ? false : null);
+
+    expect(fn () => $store->restore($record, $v1->id))
+        ->toThrow(VersionWriteRefused::class);
+
+    // The reset put the baseline back to the PRE-CALL state — not the refused v0 the cast cache held
+    // mid-restore. Pre-fix the sync-then-clear order synced `original` from getAttributes() while the
+    // cache still held v0, merging it over the baseline: getRawOriginal() then read v0 and isDirty() lied.
+    expect(json_decode($record->getRawOriginal('data'), true))->toBe(['k' => 'current'])
+        ->and($record->isDirty())->toBeFalse();
+
+    // Veto lifted: a later save stores nothing of the refused write — the row stays 'current'.
+    $veto = false;
+    $record->save();
+    expect($record->fresh()->data['k'])->toBe('current');
+});
+
+// ── a reset that ITSELF throws must not mask the original refusal ────────────────────────────────────
+
+it('surfaces the original refusal unchanged even when the instance reset itself throws', function (): void {
+    $record = ResetThrowingFixtureRecord::query()->create(['name' => 'original', 'data' => ['k' => 'v0']]);
+    $store = app(VersionStore::class);
+
+    $v1 = $store->snapshot($record);
+    $record->update(['name' => 'current', 'data' => ['k' => 'current']]);
+
+    // The pin-move write is vetoed, AND the reset the refusal triggers will itself throw.
+    ResetThrowingFixtureRecord::saving(fn () => false);
+    $record->failReset = true;
+
+    // The ORIGINAL VersionWriteRefused must surface, NOT the reset's own RuntimeException: a reset that
+    // fails must not rewrite why the write was refused (pre-fix the reset ran uncaught, so its
+    // RESET_BOOM propagated and masked the refusal).
+    expect(fn () => $store->restore($record, $v1->id))
+        ->toThrow(VersionWriteRefused::class);
 });
 
 // ── the refusal carries the subject on properties, not inside its message ───────────────────────────
