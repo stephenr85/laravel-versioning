@@ -152,9 +152,12 @@ it('preserves a caller pre-call edit through a vetoed snapshot, so a later save 
     $record->note = 'caller-edit';
     expect($record->isDirty('note'))->toBeTrue();
 
-    // Veto the HEAD-pin write, then LIFT the veto and save the SAME instance.
+    // Veto the HEAD-pin write, then LIFT the veto and save the SAME instance. A by-reference closure
+    // (not an arrow fn, which binds $veto by value at creation and would never see the lift below).
     $veto = true;
-    FixtureRecord::saving(fn () => $veto ? false : null);
+    FixtureRecord::saving(function () use (&$veto) {
+        return $veto ? false : null;
+    });
 
     expect(fn () => $store->snapshot($record))
         ->toThrow(VersionWriteRefused::class);
