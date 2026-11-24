@@ -17,10 +17,20 @@ use Rushing\Versioning\Tests\Fixtures\ThrowingRestoreFixtureRecord;
  * believes succeeded. The laws below pin that refusal AND the cleanup it owes: the mint/restore rolls
  * back as one transaction, nothing of the refused write survives on the instance (including a value
  * cached behind a class cast, and even when the reset itself throws), a caller's OWN pre-call edit is
- * preserved, ANY throwable (not only the veto) triggers the same reset, and the refusal names its
- * subject off the message. Each law below reads red against the pre-fix store — with ONE exception,
- * noted where it sits: the restore exception-factory test at the end is a coverage fold (green at
- * base AND cand), folding the restore path into the subject-naming law the snapshot path already had.
+ * preserved, ANY throwable (not only the veto) triggers the same reset, a unique collision on every
+ * attempt leaves no version, a reset that ITSELF throws does not retry onto a polluted instance (the
+ * original collision surfaces at once), and the refusal names its subject off the message.
+ *
+ * Not every test here reads red at the pre-fix store. FOUR re-assert or fold in behavior the base
+ * store already had and are green at base AND cand: the two refuse-loudly veto tests ('refuses a
+ * snapshot whose HEAD-pin write is vetoed...' and 'refuses a restore whose write is vetoed...') and
+ * the two subject-naming tests ('names the subject on properties and keeps its identity out of the
+ * message' on the snapshot path, and the same on the restore path — the latter a coverage fold the
+ * snapshot path already had). The behavior this amend ADDS — the post-refusal instance reset and its
+ * edge cases (clean-instance, preserved pre-call edit, cached-cast clear, any-throwable reset,
+ * reset-itself-throws non-masking), the every-attempt unique collision, and the no-retry-onto-a-
+ * failed-reset rule — reads red at the pre-fix store and green at cand. The amend's gate record
+ * carries the authoritative per-test base/cand result; do not infer a claim from this comment.
  */
 
 // ── snapshot: a vetoed HEAD-pin write rolls the minted version back ────────────────────────────────
@@ -375,6 +385,47 @@ it('resets the instance and leaves no version when every snapshot attempt hits a
         ->and($record->isDirty())->toBeFalse();
 
     // Both attempts' freshly minted version rows rolled back with their transactions — only v1 remains.
+    expect($store->versions($record)->pluck('id')->all())->toBe([$v1->id]);
+});
+
+// ── a reset that ITSELF throws on the unique path must NOT retry onto the polluted instance ──────────
+
+it('surfaces the original unique collision without retrying when the post-collision reset itself throws', function (): void {
+    $record = ResetThrowingFixtureRecord::query()->create(['name' => 'original', 'data' => ['body' => 'v1']]);
+    $store = app(VersionStore::class);
+
+    $v1 = $store->snapshot($record);                        // head → v1 (reset not yet armed; no listener)
+    $record->update(['name' => 'current', 'data' => ['body' => 'current']]);
+
+    // Every pin-save attempt collides on the unique index AFTER assigning the pin, so each attempt
+    // mutates the instance and the catch's reset then runs. Count the attempts to pin the retry choice.
+    $attempts = 0;
+    ResetThrowingFixtureRecord::saving(function () use (&$attempts): void {
+        $attempts++;
+        throw new UniqueConstraintViolationException(
+            'testing',
+            'insert into "versioning_records" ...',
+            [],
+            new RuntimeException('duplicate pin'),
+        );
+    });
+
+    // Arm the reset to throw: the post-collision discardRefusedWrite() now fails and reports false. A
+    // reset that threw leaves the instance carrying the refused pin, so the store must NOT retry onto
+    // it — it must surface the ORIGINAL collision at once. Pre-fix the retry was unconditional, so the
+    // first attempt's swallowed reset still recursed into a SECOND attempt before exhausting.
+    $record->failReset = true;
+
+    // The ORIGINAL collision surfaces — not the reset's RuntimeException, and not a swallowed success.
+    expect(fn () => $store->snapshot($record))
+        ->toThrow(UniqueConstraintViolationException::class);
+
+    // The decisive law: exactly ONE attempt. A reset that succeeded would license one retry (two
+    // attempts); a reset that threw must stop at the first. Pre-fix (retry regardless) this read 2.
+    expect($attempts)->toBe(1);
+
+    // Both would-be version rows rolled back with their transactions — only v1 remains. (The instance's
+    // own attribute state is NOT asserted: when the reset throws, the contract leaves it unspecified.)
     expect($store->versions($record)->pluck('id')->all())->toBe([$v1->id]);
 });
 

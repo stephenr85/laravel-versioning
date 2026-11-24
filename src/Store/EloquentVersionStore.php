@@ -191,10 +191,13 @@ class EloquentVersionStore implements VersionStore
             // pre-call state. Otherwise the recursive retry re-captures the polluted instance (the
             // failed pin becomes its "pre-call" baseline) and the exhausted reset would put that failed
             // pin BACK. (A version-insert collision leaves the instance unmutated, so this is a no-op.)
-            $this->discardRefusedWrite($model, $attributes, $original);
+            $wasReset = $this->discardRefusedWrite($model, $attributes, $original);
 
-            if ($retriesLeft > 0) {
+            if ($wasReset && $retriesLeft > 0) {
                 // Retry once; the re-entrant allocate() now captures the reset (true pre-call) state.
+                // Only when the reset actually succeeded — a reset that threw leaves the instance
+                // carrying the refused pin, so retrying would re-capture that polluted pin as the new
+                // "pre-call" baseline. Surface the original collision at once instead.
                 return $this->allocate($model, $label, $retriesLeft - 1);
             }
 
@@ -237,8 +240,10 @@ class EloquentVersionStore implements VersionStore
      *
      * @param  array<string, mixed>  $attributes  the pre-call attribute set (the caller's edits included)
      * @param  array<string, mixed>  $original    the pre-call DB-synced original baseline
+     * @return bool  true if the instance was reset to its pre-call state; false if the reset itself threw
+     *               (state NOT guaranteed) — the unique-retry caller must NOT retry on a polluted instance.
      */
-    private function discardRefusedWrite(Model $model, array $attributes, array $original): void
+    private function discardRefusedWrite(Model $model, array $attributes, array $original): bool
     {
         try {
             // Rebuild the pre-call (attributes, original) pair with the cast caches CLEARED first, so a
@@ -251,9 +256,13 @@ class EloquentVersionStore implements VersionStore
             $model->setRawAttributes($original, false);
             $model->syncOriginal();
             $model->setRawAttributes($attributes, false);
+
+            return true;
         } catch (\Throwable) {
             // The reset itself failed; the instance's attribute state is not guaranteed. Swallow it so
-            // the caller's ORIGINAL exception (the one it is mid-throw on) surfaces unmasked.
+            // the caller's ORIGINAL exception (the one it is mid-throw on) surfaces unmasked, and report
+            // the failure so the unique-retry caller does not retry on a polluted instance.
+            return false;
         }
     }
 
