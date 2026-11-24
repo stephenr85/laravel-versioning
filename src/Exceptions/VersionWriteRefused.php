@@ -20,8 +20,9 @@ use RuntimeException;
  *
  * The refusal is loud but its message carries NO record identity: the subject's morph type and key
  * ride on {@see $subjectType}/{@see $subjectKey} so a host can read them and build its OWN
- * user-facing message, instead of forwarding an internal `[type:id]` string the record owner should
- * never see.
+ * user-facing message, instead of reading the identity back out of a message that deliberately never
+ * interpolates it — so neither the morph type nor the key an owner must not see leaks to a caller
+ * that only logs the exception.
  */
 class VersionWriteRefused extends RuntimeException
 {

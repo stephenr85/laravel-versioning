@@ -3,6 +3,7 @@
 namespace Rushing\Versioning\Contracts;
 
 use Illuminate\Support\Collection;
+use Rushing\Versioning\Exceptions\VersionWriteRefused;
 use Rushing\Versioning\Models\Version;
 use Rushing\Versioning\VersioningServiceProvider;
 
@@ -19,6 +20,11 @@ interface VersionStore
     /**
      * Freeze the record's current content ({@see Versionable::toVersionSnapshot()}) into a new
      * immutable version — the next per-record monotonic `version` — and advance HEAD to it.
+     *
+     * @throws VersionWriteRefused when a halting `saving`/`updating` listener vetoes the HEAD-pin
+     *                             write: the transaction rolls the minted version back and nothing
+     *                             persists, and the record instance's attribute state (and its dirty
+     *                             set) is left exactly as it was pre-call — the attempted pin discarded.
      */
     public function snapshot(Versionable $model, ?string $label = null): Version;
 
@@ -39,6 +45,16 @@ interface VersionStore
      * Apply a version's snapshot back onto the record ({@see Versionable::restoreVersionSnapshot()})
      * and move HEAD to it. This is the pointer-move primitive; whether a restore ALSO mints a fresh
      * version (append-only history) is a consumer decision layered on top, not baked in here.
+     *
+     * Content-apply and pin-move run in one transaction, so a vetoed restore rolls BOTH back even when
+     * the record's restoreVersionSnapshot() saves its own content; the record instance's attribute
+     * state (and its dirty set) is left exactly as it was pre-call.
+     *
+     * @throws VersionWriteRefused when a halting `saving`/`updating` listener vetoes the restoring
+     *                             write: nothing persists and the record instance's attribute state is
+     *                             left exactly as it was pre-call (the caller's own pre-call edits
+     *                             preserved; the attempted restore discarded). Any other throwable
+     *                             raised mid-restore is rethrown unchanged after the same reset.
      */
     public function restore(Versionable $model, string $ref): void;
 

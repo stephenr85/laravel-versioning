@@ -98,17 +98,40 @@ class EloquentVersionStore implements VersionStore
             $snapshot = $model->migrateSnapshotForward($snapshot);
         }
 
-        // Apply the frozen snapshot back onto the live record and move HEAD to it in one save. This is
-        // the pointer-move primitive; a consumer that wants restore to ALSO mint a fresh version
-        // (append-only history) layers a snapshot() call on top — the store does not bake that in.
-        $model->restoreVersionSnapshot($snapshot);
-        $model->setAttribute($model->versionPinAttribute(), $version->id);
+        // Restoring must be atomic. A record whose restoreVersionSnapshot() saves its OWN content (a
+        // self-saving impl) would otherwise COMMIT that content before the separate pin-move; if the
+        // pin-move is then vetoed, the content stands restored while HEAD never moved — a split write.
+        // Apply the content, move the pin, and persist inside ONE transaction on the record's own
+        // connection (as allocate() does), so a refusal rolls BOTH back. Capture BOTH the pre-restore
+        // attributes AND the DB-synced original baseline (before any mutation), so the instance reset
+        // below restores the EXACT pre-call dirty set — a caller's own unsaved edit survives.
+        $attributes = $model->getAttributes();
+        $original = $model->getRawOriginal();
 
-        // The pointer-move can be refused: a halting `saving`/`updating` listener makes `save()`
-        // return false without persisting. Nothing here is transactional, so a swallowed boolean
-        // would leave the record unchanged while the caller believes the restore landed. Fail loudly.
-        if (! $model->save()) {
-            throw VersionWriteRefused::restore($model);
+        try {
+            $this->db->connection($model->getConnectionName())->transaction(function () use ($model, $snapshot, $version): void {
+                // The pointer-move primitive; a consumer that wants restore to ALSO mint a fresh version
+                // (append-only history) layers a snapshot() call on top — the store does not bake that in.
+                $model->restoreVersionSnapshot($snapshot);
+                $model->setAttribute($model->versionPinAttribute(), $version->id);
+
+                // The pointer-move can be refused: a halting `saving`/`updating` listener makes `save()`
+                // return false without persisting. Throw so the transaction rolls back any content a
+                // self-saving restoreVersionSnapshot() already committed — nothing persists.
+                if (! $model->save()) {
+                    throw VersionWriteRefused::restore($model);
+                }
+            });
+        } catch (\Throwable $e) {
+            // The transaction rolled the ROW back, but the in-memory instance still carries the refused
+            // snapshot + pin — and so it would after ANY throwable that aborted mid-restore (a veto, or
+            // a listener that threw AFTER mutating the model), so a later save()/saveQuietly() on this
+            // same instance would store that write. Put the instance back to its pre-restore state and
+            // rethrow the ORIGINAL exception unchanged. (Synchronous `saved` observer side effects that
+            // already ran are NOT undone by the rollback — only the row and these attributes are.)
+            $this->discardRefusedWrite($model, $attributes, $original);
+
+            throw $e;
         }
     }
 
@@ -131,6 +154,11 @@ class EloquentVersionStore implements VersionStore
      */
     private function allocate(Model&Versionable $model, ?string $label, int $retriesLeft): Version
     {
+        // Pre-snapshot attributes AND the DB-synced original baseline, for the instance reset if the
+        // pin-move is refused below — both, so the caller's pre-call dirty set is preserved exactly.
+        $attributes = $model->getAttributes();
+        $original = $model->getRawOriginal();
+
         try {
             // The record's own connection, for the transaction and the row (see {@see on()}).
             return $this->db->connection($model->getConnectionName())->transaction(function () use ($model, $label): Version {
@@ -162,7 +190,46 @@ class EloquentVersionStore implements VersionStore
             }
 
             throw $e;
+        } catch (\Throwable $e) {
+            // The transaction rolled back the freshly minted version row, but the in-memory instance
+            // still carries the refused HEAD pin — as it would after ANY throwable that aborted the
+            // mint mid-flight; a later save() on this same instance would store it. Put the instance
+            // back to its pre-snapshot state and rethrow the ORIGINAL exception unchanged. (A unique
+            // collision is handled by the retry catch above and never reaches here.)
+            $this->discardRefusedWrite($model, $attributes, $original);
+
+            throw $e;
         }
+    }
+
+    /**
+     * Put a record's in-memory state back to what it held before a refused (or otherwise aborted)
+     * write, so the rolled-back row and the live instance agree. A refusal rolls the ROW back, but the
+     * instance keeps the refused snapshot/pin it was given; a later save()/saveQuietly() on that same
+     * instance would then store the write the veto refused.
+     *
+     * Restores BOTH halves of the dirty comparison — the attributes AND the DB-synced `original`
+     * baseline — to their pre-call values, so the caller's OWN pre-call dirty set is preserved EXACTLY:
+     * only the store's attempted pin/restore mutation is discarded. A blanket syncOriginal() would
+     * instead mark a caller's unsaved pre-call edit "clean", so a later save() would silently drop it.
+     * The two setRawAttributes() calls do this with no reflection: the first (sync) sets `original` to
+     * the baseline, the second (no sync) sets `attributes` to the pre-call values and leaves `original`.
+     *
+     * Scope: this resets the ATTRIBUTE state (attributes + original) only. It does NOT reset the
+     * post-save change log (getChanges()/wasChanged() still reflect the attempted write), loaded
+     * relations, `exists`/`wasRecentlyCreated`, or any custom in-memory state a record keeps; a caller
+     * that reads those after a refused write must not rely on them.
+     *
+     * @param  array<string, mixed>  $attributes  the pre-call attribute set (the caller's edits included)
+     * @param  array<string, mixed>  $original    the pre-call DB-synced original baseline
+     */
+    private function discardRefusedWrite(Model $model, array $attributes, array $original): void
+    {
+        // original := pre-call baseline (sync=true copies attributes->original), then
+        // attributes := pre-call values (sync=false leaves original untouched). Net: the exact
+        // pre-call (attributes, original) pair, so isDirty()/getDirty() match the pre-call state.
+        $model->setRawAttributes($original, true);
+        $model->setRawAttributes($attributes, false);
     }
 
     private function nextVersionNumber(Model&Versionable $model): int
