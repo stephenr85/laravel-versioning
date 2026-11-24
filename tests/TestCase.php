@@ -58,6 +58,9 @@ abstract class TestCase extends Orchestra
             $table->uuid('id')->primary();
             $table->string('name');
             $table->json('data')->nullable();
+            // A field that NEITHER toVersionSnapshot() nor restoreVersionSnapshot() touches, so a test
+            // can model a caller's OWN unrelated pre-call edit and assert it survives a refused write.
+            $table->string('note')->nullable();
             $table->uuid('head_version')->nullable();
             $table->timestamps();
         });
