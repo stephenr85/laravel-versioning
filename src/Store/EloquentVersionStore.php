@@ -185,17 +185,18 @@ class EloquentVersionStore implements VersionStore
                 return $version;
             });
         } catch (UniqueConstraintViolationException $e) {
+            // A unique collision raised by the PIN SAVE (not the version insert) mutated the instance
+            // with the attempted pin BEFORE it threw. Reset to THIS frame's true pre-call pair FIRST —
+            // before BOTH the retry and the final rethrow — so every attempt starts from the real
+            // pre-call state. Otherwise the recursive retry re-captures the polluted instance (the
+            // failed pin becomes its "pre-call" baseline) and the exhausted reset would put that failed
+            // pin BACK. (A version-insert collision leaves the instance unmutated, so this is a no-op.)
+            $this->discardRefusedWrite($model, $attributes, $original);
+
             if ($retriesLeft > 0) {
-                // The retry re-enters allocate(), which re-captures ($attributes, $original) from the
-                // live instance — so the reset below is for the EXHAUSTED path only, not this branch.
+                // Retry once; the re-entrant allocate() now captures the reset (true pre-call) state.
                 return $this->allocate($model, $label, $retriesLeft - 1);
             }
-
-            // A unique collision raised by the PIN SAVE (not the version insert) mutated the instance
-            // before it threw; reset before the final rethrow so the exhausted-retry path closes the
-            // same "any throwable resets the instance" hole the \Throwable catch below does. (A
-            // version-insert collision leaves the instance unmutated, so the reset is then a no-op.)
-            $this->discardRefusedWrite($model, $attributes, $original);
 
             throw $e;
         } catch (\Throwable $e) {

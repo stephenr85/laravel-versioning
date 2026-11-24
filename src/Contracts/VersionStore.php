@@ -21,6 +21,13 @@ interface VersionStore
      * Freeze the record's current content ({@see Versionable::toVersionSnapshot()}) into a new
      * immutable version — the next per-record monotonic `version` — and advance HEAD to it.
      *
+     * The pre-call reset after a refused (or otherwise aborted) write is BEST-EFFORT and covers
+     * ATTRIBUTE state only (attributes + the `original` baseline, cached casts included); it does NOT
+     * restore the post-save change log, loaded relations, or custom in-memory state. If the reset
+     * ITSELF throws — a record that overrides `setRawAttributes()`, or carries a cast that can throw on
+     * merge — that error is swallowed so the original refusal surfaces unmasked, and the instance's
+     * attribute state is then UNSPECIFIED: such a record must be DISCARDED / re-fetched, not reused.
+     *
      * @throws VersionWriteRefused when a halting `saving`/`updating` listener vetoes the HEAD-pin
      *                             write: the transaction rolls the minted version back and nothing
      *                             persists, and the record instance's attribute state (and its dirty
@@ -49,6 +56,10 @@ interface VersionStore
      * Content-apply and pin-move run in one transaction, so a vetoed restore rolls BOTH back even when
      * the record's restoreVersionSnapshot() saves its own content; the record instance's attribute
      * state (and its dirty set) is left exactly as it was pre-call.
+     *
+     * The pre-call reset is BEST-EFFORT, exactly as described on {@see self::snapshot()}: attribute
+     * state only, and UNSPECIFIED if the reset itself throws (an overridden `setRawAttributes()` or a
+     * cast that throws on merge) — such a record must be DISCARDED / re-fetched, not reused.
      *
      * @throws VersionWriteRefused when a halting `saving`/`updating` listener vetoes the restoring
      *                             write: nothing persists and the record instance's attribute state is

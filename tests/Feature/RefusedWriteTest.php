@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Database\UniqueConstraintViolationException;
 use Rushing\Versioning\Contracts\VersionStore;
 use Rushing\Versioning\Exceptions\VersionWriteRefused;
 use Rushing\Versioning\Models\Version;
@@ -262,9 +263,21 @@ it('resets a cached class-cast attribute to the pre-call baseline, not the refus
     expect($record->data['k'])->toBe('current')
         ->and($record->isDirty())->toBeFalse();                      // just saved: a clean baseline
 
-    // The restore's pin-move write is vetoed.
+    // The restore's pin-move write is vetoed — and the veto listener READS the class cast on the
+    // instance first, so its resolved value (the REFUSED v0 the restore just applied) is held in
+    // classCastCache when the reset runs. restoreVersionSnapshot() filled `data` as a plain array,
+    // which clears the cache, so WITHOUT this read the cache is empty at reset time and the old
+    // sync-then-clear order passes too — proving nothing. This read is what makes the mutant die.
     $veto = true;
-    CachingCastFixtureRecord::saving(fn () => $veto ? false : null);
+    CachingCastFixtureRecord::saving(function ($model) use (&$veto) {
+        if (! $veto) {
+            return null;
+        }
+
+        $model->data; // resolve + cache the attempted v0
+
+        return false;
+    });
 
     expect(fn () => $store->restore($record, $v1->id))
         ->toThrow(VersionWriteRefused::class);
@@ -320,6 +333,46 @@ it('names the subject on properties and keeps its identity out of the message', 
             ->not->toContain($record->getMorphClass())
             ->not->toContain((string) $record->getKey());
     }
+});
+
+// ── a pin-save unique collision on EVERY attempt resets the instance and leaves no version ──────────
+
+it('resets the instance and leaves no version when every snapshot attempt hits a unique collision', function (): void {
+    $record = FixtureRecord::query()->create(['name' => 'original', 'data' => ['body' => 'v1']]);
+    $store = app(VersionStore::class);
+
+    $v1 = $store->snapshot($record);                        // head → v1
+    $record->update(['name' => 'current', 'data' => ['body' => 'current']]);
+
+    $pinBefore = $record->getAttribute($record->versionPinAttribute());
+    expect($record->isDirty())->toBeFalse();                // clean pre-call baseline (pin = v1)
+
+    // A unique collision raised by the PIN SAVE (not the version insert) throws AFTER the pin attribute
+    // is assigned, so each attempt mutates the instance before it throws. The record's `saving` listener
+    // throws a UniqueConstraintViolation on every try; the one allowed retry re-enters allocate() and
+    // collides again, exhausting the retry.
+    FixtureRecord::saving(function (): void {
+        throw new UniqueConstraintViolationException(
+            'testing',
+            'insert into "versioning_records" ...',
+            [],
+            new RuntimeException('duplicate pin'),
+        );
+    });
+
+    // The collision surfaces unchanged after the retry is exhausted.
+    expect(fn () => $store->snapshot($record))
+        ->toThrow(UniqueConstraintViolationException::class);
+
+    // The instance was reset to the TRUE pre-call pair before EACH rethrow, so it carries NONE of the
+    // attempted pins: the pin attribute and the dirty set equal pre-call. Pre-fix the unique catch reset
+    // ran only on the EXHAUSTED path, over attributes the first attempt had already polluted with its
+    // failed pin (the recursion re-captured the polluted instance) — so the failed pin was put BACK.
+    expect($record->getAttribute($record->versionPinAttribute()))->toBe($pinBefore)
+        ->and($record->isDirty())->toBeFalse();
+
+    // Both attempts' freshly minted version rows rolled back with their transactions — only v1 remains.
+    expect($store->versions($record)->pluck('id')->all())->toBe([$v1->id]);
 });
 
 // Coverage fold (green at base AND cand): the RESTORE factory carries the subject on properties and
